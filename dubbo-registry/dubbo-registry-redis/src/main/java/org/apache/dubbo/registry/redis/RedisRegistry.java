@@ -90,22 +90,30 @@ public class RedisRegistry extends FailbackRegistry {
         config.setTestOnBorrow(url.getParameter("test.on.borrow", true));
         config.setTestOnReturn(url.getParameter("test.on.return", false));
         config.setTestWhileIdle(url.getParameter("test.while.idle", false));
-        if (url.getParameter("max.idle", 0) > 0)
+        if (url.getParameter("max.idle", 0) > 0) {
             config.setMaxIdle(url.getParameter("max.idle", 0));
-        if (url.getParameter("min.idle", 0) > 0)
+        }
+        if (url.getParameter("min.idle", 0) > 0) {
             config.setMinIdle(url.getParameter("min.idle", 0));
-        if (url.getParameter("max.active", 0) > 0)
+        }
+        if (url.getParameter("max.active", 0) > 0) {
             config.setMaxTotal(url.getParameter("max.active", 0));
-        if (url.getParameter("max.total", 0) > 0)
+        }
+        if (url.getParameter("max.total", 0) > 0) {
             config.setMaxTotal(url.getParameter("max.total", 0));
-        if (url.getParameter("max.wait", url.getParameter("timeout", 0)) > 0)
+        }
+        if (url.getParameter("max.wait", url.getParameter("timeout", 0)) > 0) {
             config.setMaxWaitMillis(url.getParameter("max.wait", url.getParameter("timeout", 0)));
-        if (url.getParameter("num.tests.per.eviction.run", 0) > 0)
+        }
+        if (url.getParameter("num.tests.per.eviction.run", 0) > 0) {
             config.setNumTestsPerEvictionRun(url.getParameter("num.tests.per.eviction.run", 0));
-        if (url.getParameter("time.between.eviction.runs.millis", 0) > 0)
+        }
+        if (url.getParameter("time.between.eviction.runs.millis", 0) > 0) {
             config.setTimeBetweenEvictionRunsMillis(url.getParameter("time.between.eviction.runs.millis", 0));
-        if (url.getParameter("min.evictable.idle.time.millis", 0) > 0)
+        }
+        if (url.getParameter("min.evictable.idle.time.millis", 0) > 0) {
             config.setMinEvictableIdleTimeMillis(url.getParameter("min.evictable.idle.time.millis", 0));
+        }
 
         String cluster = url.getParameter("cluster", "failover");
         if (!"failover".equals(cluster) && !"replicate".equals(cluster)) {
@@ -120,7 +128,6 @@ public class RedisRegistry extends FailbackRegistry {
             addresses.addAll(Arrays.asList(backups));
         }
 
-        String password = url.getPassword();
         for (String address : addresses) {
             int i = address.indexOf(':');
             String host;
@@ -132,15 +139,9 @@ public class RedisRegistry extends FailbackRegistry {
                 host = address;
                 port = DEFAULT_REDIS_PORT;
             }
-            if (StringUtils.isEmpty(password)) {
-                this.jedisPools.put(address, new JedisPool(config, host, port,
-                        url.getParameter(Constants.TIMEOUT_KEY, Constants.DEFAULT_TIMEOUT), null,
-                        url.getParameter("db.index", 0)));
-            } else {
-                this.jedisPools.put(address, new JedisPool(config, host, port,
-                        url.getParameter(Constants.TIMEOUT_KEY, Constants.DEFAULT_TIMEOUT), password,
-                        url.getParameter("db.index", 0)));
-            }
+            this.jedisPools.put(address, new JedisPool(config, host, port,
+                    url.getParameter(Constants.TIMEOUT_KEY, Constants.DEFAULT_TIMEOUT), StringUtils.isEmpty(url.getPassword()) ? null : url.getPassword(),
+                    url.getParameter("db.index", 0)));
         }
 
         this.reconnectPeriod = url.getParameter(Constants.REGISTRY_RECONNECT_PERIOD_KEY, Constants.DEFAULT_REGISTRY_RECONNECT_PERIOD);
@@ -415,8 +416,8 @@ public class RedisRegistry extends FailbackRegistry {
         String consumerService = url.getServiceInterface();
         for (String key : keys) {
             if (!Constants.ANY_VALUE.equals(consumerService)) {
-                String prvoiderService = toServiceName(key);
-                if (!prvoiderService.equals(consumerService)) {
+                String providerService = toServiceName(key);
+                if (!providerService.equals(consumerService)) {
                     continue;
                 }
             }
@@ -539,7 +540,7 @@ public class RedisRegistry extends FailbackRegistry {
 
         private final String service;
         private final AtomicInteger connectSkip = new AtomicInteger();
-        private final AtomicInteger connectSkiped = new AtomicInteger();
+        private final AtomicInteger connectSkipped = new AtomicInteger();
         private final Random random = new Random();
         private volatile Jedis jedis;
         private volatile boolean first = true;
@@ -554,7 +555,7 @@ public class RedisRegistry extends FailbackRegistry {
 
         private void resetSkip() {
             connectSkip.set(0);
-            connectSkiped.set(0);
+            connectSkipped.set(0);
             connectRandom = 0;
         }
 
@@ -566,11 +567,11 @@ public class RedisRegistry extends FailbackRegistry {
                 }
                 skip = 10 + connectRandom;
             }
-            if (connectSkiped.getAndIncrement() < skip) { // Check the number of skipping times
+            if (connectSkipped.getAndIncrement() < skip) { // Check the number of skipping times
                 return true;
             }
             connectSkip.incrementAndGet();
-            connectSkiped.set(0);
+            connectSkipped.set(0);
             connectRandom = 0;
             return false;
         }

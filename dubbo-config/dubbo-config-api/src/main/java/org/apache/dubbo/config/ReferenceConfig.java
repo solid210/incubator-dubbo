@@ -27,8 +27,6 @@ import org.apache.dubbo.common.utils.NetUtils;
 import org.apache.dubbo.common.utils.ReflectUtils;
 import org.apache.dubbo.common.utils.StringUtils;
 import org.apache.dubbo.config.annotation.Reference;
-import org.apache.dubbo.config.model.ApplicationModel;
-import org.apache.dubbo.config.model.ConsumerModel;
 import org.apache.dubbo.config.support.Parameter;
 import org.apache.dubbo.rpc.Invoker;
 import org.apache.dubbo.rpc.Protocol;
@@ -38,6 +36,8 @@ import org.apache.dubbo.rpc.cluster.Cluster;
 import org.apache.dubbo.rpc.cluster.directory.StaticDirectory;
 import org.apache.dubbo.rpc.cluster.support.AvailableCluster;
 import org.apache.dubbo.rpc.cluster.support.ClusterUtils;
+import org.apache.dubbo.rpc.model.ApplicationModel;
+import org.apache.dubbo.rpc.model.ConsumerModel;
 import org.apache.dubbo.rpc.protocol.injvm.InjvmProtocol;
 import org.apache.dubbo.rpc.service.GenericService;
 import org.apache.dubbo.rpc.support.ProtocolUtils;
@@ -229,7 +229,9 @@ public class ReferenceConfig<T> extends AbstractReferenceConfig {
                     throw new IllegalStateException("Unload " + resolveFile + ", cause: " + e.getMessage(), e);
                 } finally {
                     try {
-                        if (null != fis) fis.close();
+                        if (null != fis) {
+                            fis.close();
+                        }
                     } catch (IOException e) {
                         logger.warn(e.getMessage(), e);
                     }
@@ -281,7 +283,7 @@ public class ReferenceConfig<T> extends AbstractReferenceConfig {
         checkStubAndMock(interfaceClass);
         Map<String, String> map = new HashMap<String, String>();
         resolveAsyncInterface(interfaceClass, map);
-        Map<Object, Object> attributes = new HashMap<Object, Object>();
+
         map.put(Constants.SIDE_KEY, Constants.CONSUMER_SIDE);
         map.put(Constants.DUBBO_VERSION_KEY, Version.getProtocolVersion());
         map.put(Constants.TIMESTAMP_KEY, String.valueOf(System.currentTimeMillis()));
@@ -309,6 +311,7 @@ public class ReferenceConfig<T> extends AbstractReferenceConfig {
         appendParameters(map, this);
         String prefix = StringUtils.getServiceKey(map);
         if (methods != null && !methods.isEmpty()) {
+            Map<Object, Object> attributes = new HashMap<Object, Object>();
             for (MethodConfig method : methods) {
                 appendParameters(map, method, method.getName());
                 String retryKey = method.getName() + ".retry";
@@ -321,6 +324,8 @@ public class ReferenceConfig<T> extends AbstractReferenceConfig {
                 appendAttributes(attributes, method, prefix + "." + method.getName());
                 checkAndConvertImplicitConfig(method, map, attributes);
             }
+            //attributes are stored by system context.
+            StaticContext.getSystemContext().putAll(attributes);
         }
 
         String hostToRegistry = ConfigUtils.getSystemProperty(Constants.DUBBO_IP_TO_REGISTRY);
@@ -331,10 +336,8 @@ public class ReferenceConfig<T> extends AbstractReferenceConfig {
         }
         map.put(Constants.REGISTER_IP_KEY, hostToRegistry);
 
-        //attributes are stored by system context.
-        StaticContext.getSystemContext().putAll(attributes);
         ref = createProxy(map);
-        ConsumerModel consumerModel = new ConsumerModel(getUniqueServiceName(), this, ref, interfaceClass.getMethods());
+        ConsumerModel consumerModel = new ConsumerModel(getUniqueServiceName(), ref, interfaceClass.getMethods());
         ApplicationModel.initConsumerModel(getUniqueServiceName(), consumerModel);
     }
 
@@ -345,14 +348,12 @@ public class ReferenceConfig<T> extends AbstractReferenceConfig {
         if (isInjvm() == null) {
             if (url != null && url.length() > 0) { // if a url is specified, don't do local reference
                 isJvmRefer = false;
-            } else if (InjvmProtocol.getInjvmProtocol().isInjvmRefer(tmpUrl)) {
-                // by default, reference local service if there is
-                isJvmRefer = true;
             } else {
-                isJvmRefer = false;
+                // by default, reference local service if there is
+                isJvmRefer = InjvmProtocol.getInjvmProtocol().isInjvmRefer(tmpUrl);
             }
         } else {
-            isJvmRefer = isInjvm().booleanValue();
+            isJvmRefer = isInjvm();
         }
 
         if (isJvmRefer) {
@@ -422,6 +423,8 @@ public class ReferenceConfig<T> extends AbstractReferenceConfig {
             c = true; // default true
         }
         if (c && !invoker.isAvailable()) {
+            // make it possible for consumer to retry later if provider is temporarily unavailable
+            initialized = false;
             throw new IllegalStateException("Failed to check the status of the service " + interfaceName + ". No provider available for the service " + (group == null ? "" : group + "/") + interfaceName + (version == null ? "" : ":" + version) + " from the url " + invoker.getUrl() + " to the consumer " + NetUtils.getLocalHost() + " use dubbo version " + Version.getVersion());
         }
         if (logger.isInfoEnabled()) {
@@ -440,9 +443,13 @@ public class ReferenceConfig<T> extends AbstractReferenceConfig {
 
     private void resolveAsyncInterface(Class<?> interfaceClass, Map<String, String> map) {
         AsyncFor annotation = interfaceClass.getAnnotation(AsyncFor.class);
-        if (annotation == null) return;
+        if (annotation == null) {
+            return;
+        }
         Class<?> target = annotation.value();
-        if (!target.isAssignableFrom(interfaceClass)) return;
+        if (!target.isAssignableFrom(interfaceClass)) {
+            return;
+        }
         this.asyncInterfaceClass = interfaceClass;
         this.interfaceClass = target;
         setInterface(this.interfaceClass.getName());

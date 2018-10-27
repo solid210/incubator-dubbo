@@ -21,6 +21,7 @@ import org.apache.dubbo.common.logger.Logger;
 import org.apache.dubbo.common.logger.LoggerFactory;
 
 import java.io.IOException;
+import java.net.Inet6Address;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.NetworkInterface;
@@ -133,13 +134,59 @@ public class NetUtils {
     }
 
     static boolean isValidAddress(InetAddress address) {
-        if (address == null || address.isLoopbackAddress())
+        if (address == null || address.isLoopbackAddress()) {
             return false;
+        }
         String name = address.getHostAddress();
         return (name != null
                 && !ANYHOST.equals(name)
                 && !LOCALHOST.equals(name)
                 && IP_PATTERN.matcher(name).matches());
+    }
+
+    /**
+     * Check if an ipv6 address is reachable.
+     * @param address the given address
+     * @return true if it is reachable
+     */
+    static boolean isValidV6Address(Inet6Address address) {
+        boolean preferIpv6 = Boolean.getBoolean("java.net.preferIPv6Addresses");
+        if (!preferIpv6) {
+            return false;
+        }
+        try {
+            return address.isReachable(100);
+        } catch (IOException e) {
+            // ignore
+        }
+        return false;
+    }
+
+    /**
+     * normalize the ipv6 Address, convert scope name to scope id.
+     * e.g.
+     * convert
+     *   fe80:0:0:0:894:aeec:f37d:23e1%en0
+     * to
+     *   fe80:0:0:0:894:aeec:f37d:23e1%5
+     *
+     * The %5 after ipv6 address is called scope id.
+     * see java doc of {@link Inet6Address} for more details.
+     * @param address the input address
+     * @return the normalized address, with scope id converted to int
+     */
+    static InetAddress normalizeV6Address(Inet6Address address) {
+        String addr = address.getHostAddress();
+        int i = addr.lastIndexOf('%');
+        if (i > 0) {
+            try {
+                return InetAddress.getByName(addr.substring(0, i) + '%' + address.getScopeId());
+            } catch (UnknownHostException e) {
+                // ignore
+                logger.debug("Unknown IPV6 address: ", e);
+            }
+        }
+        return address;
     }
 
     public static String getLocalHost() {
@@ -175,8 +222,9 @@ public class NetUtils {
      * @return first valid local IP
      */
     public static InetAddress getLocalAddress() {
-        if (LOCAL_ADDRESS != null)
+        if (LOCAL_ADDRESS != null) {
             return LOCAL_ADDRESS;
+        }
         InetAddress localAddress = getLocalAddress0();
         LOCAL_ADDRESS = localAddress;
         return localAddress;
@@ -186,7 +234,12 @@ public class NetUtils {
         InetAddress localAddress = null;
         try {
             localAddress = InetAddress.getLocalHost();
-            if (isValidAddress(localAddress)) {
+            if (localAddress instanceof Inet6Address) {
+                Inet6Address address = (Inet6Address) localAddress;
+                if (isValidV6Address(address)){
+                    return normalizeV6Address(address);
+                }
+            } else if (isValidAddress(localAddress)) {
                 return localAddress;
             }
         } catch (Throwable e) {
@@ -194,26 +247,30 @@ public class NetUtils {
         }
         try {
             Enumeration<NetworkInterface> interfaces = NetworkInterface.getNetworkInterfaces();
-            if (interfaces != null) {
-                while (interfaces.hasMoreElements()) {
-                    try {
-                        NetworkInterface network = interfaces.nextElement();
-                        Enumeration<InetAddress> addresses = network.getInetAddresses();
-                        if (addresses != null) {
-                            while (addresses.hasMoreElements()) {
-                                try {
-                                    InetAddress address = addresses.nextElement();
-                                    if (isValidAddress(address)) {
-                                        return address;
-                                    }
-                                } catch (Throwable e) {
-                                    logger.warn(e);
+            if (null == interfaces) {
+                return localAddress;
+            }
+            while (interfaces.hasMoreElements()) {
+                try {
+                    NetworkInterface network = interfaces.nextElement();
+                    Enumeration<InetAddress> addresses = network.getInetAddresses();
+                    while (addresses.hasMoreElements()) {
+                        try {
+                            InetAddress address = addresses.nextElement();
+                            if (address instanceof Inet6Address) {
+                                Inet6Address v6Address = (Inet6Address) address;
+                                if (isValidV6Address(v6Address)){
+                                    return normalizeV6Address(v6Address);
                                 }
+                            } else if (isValidAddress(address)) {
+                                return address;
                             }
+                        } catch (Throwable e) {
+                            logger.warn(e);
                         }
-                    } catch (Throwable e) {
-                        logger.warn(e);
                     }
+                } catch (Throwable e) {
+                    logger.warn(e);
                 }
             }
         } catch (Throwable e) {
@@ -278,8 +335,9 @@ public class NetUtils {
         StringBuilder sb = new StringBuilder();
         sb.append(protocol).append("://");
         sb.append(host).append(':').append(port);
-        if (path.charAt(0) != '/')
+        if (path.charAt(0) != '/') {
             sb.append('/');
+        }
         sb.append(path);
         return sb.toString();
     }
